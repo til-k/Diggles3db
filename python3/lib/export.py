@@ -16,7 +16,7 @@ def build_vertices_array(triangles: List[int], points: List[Tuple[float, float, 
     vertices = [points[index] for index in triangles]
     return vertices
 
-def export_to_gltf(model: Model):
+def export_to_gltf(model: Model, name: str, output_path: str):
     nodes = []
     meshes = []
     accessors = []
@@ -68,14 +68,14 @@ def export_to_gltf(model: Model):
         asset=Asset(version='2.0'),
         scenes=[Scene(nodes=[x for x in range(len(nodes))])],
         nodes=nodes,
-        buffers=[Buffer(byteLength=len(vertex_byte_array), uri='vertices.bin'), Buffer(byteLength=len(index_byte_array), uri='indices.bin')],
+        buffers=[Buffer(byteLength=len(vertex_byte_array), uri= name + '_vertices.bin'), Buffer(byteLength=len(index_byte_array), uri=name + '_indices.bin')],
         bufferViews=[BufferView(buffer=0, byteOffset=0, byteLength=len(vertex_byte_array), target=BufferTarget.ARRAY_BUFFER.value),
                      BufferView(buffer=1, byteOffset=0, byteLength=len(index_byte_array), target=BufferTarget.ELEMENT_ARRAY_BUFFER.value)],
         accessors=accessors,
         meshes=meshes
     )
 
-    gltf = GLTF(model=model, resources=[FileResource('vertices.bin', data=vertex_byte_array),
-                                        FileResource('indices.bin', data=index_byte_array)])
-    gltf.export('out.gltf')
-    print('Wrote to out.gltf, vertices.bin and indices.bin files')
+    gltf = GLTF(model=model, resources=[FileResource(name + '_vertices.bin', data=vertex_byte_array),
+                                        FileResource(name + '_indices.bin', data=index_byte_array)])
+    gltf.export(output_path + "/" + name + '_out.gltf')
+    print('Converted: ' + name)
