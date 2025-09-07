@@ -72,10 +72,11 @@ def export_to_gltf(model: Model, name: str, output_path: str):
         bufferViews=[BufferView(buffer=0, byteOffset=0, byteLength=len(vertex_byte_array), target=BufferTarget.ARRAY_BUFFER.value),
                      BufferView(buffer=1, byteOffset=0, byteLength=len(index_byte_array), target=BufferTarget.ELEMENT_ARRAY_BUFFER.value)],
         accessors=accessors,
-        meshes=meshes
+        meshes=meshes,
+        
     )
 
     gltf = GLTF(model=model, resources=[FileResource(name + '_vertices.bin', data=vertex_byte_array),
                                         FileResource(name + '_indices.bin', data=index_byte_array)])
-    gltf.export(output_path + "/" + name + '_out.gltf')
+    gltf.export_glb(output_path + "/" + name + '_out.glb')
     print('Converted: ' + name)
