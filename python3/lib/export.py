@@ -9,8 +9,10 @@ from typing import List, Dict, Tuple
 import os
 
 def transform_point(p: Tuple[float, float, float]):
+    # TODO: Check why scale and axis flip work the way they do. It looks good when importing the model in Blender.
     scale = 100
-    result = ((p[0] - 0.5) * scale, (p[1] -0.5) * scale, (p[2] - 0.5) * scale)
+    # Flip Y-axis and Z-axis to match the glTF coordinate system
+    result = ((p[0] - 0.5) * scale, - (p[1] -0.5) * scale, - (p[2] - 0.5) * scale)
     return result
 
 def build_vertices_array(triangles: List[int], points: List[Tuple[float, float, float]]):
