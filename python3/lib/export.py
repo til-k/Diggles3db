@@ -2,7 +2,7 @@ import struct
 import operator
 from gltflib import (
     GLTF, GLTFModel, Asset, Scene, Node, Mesh, Primitive, Attributes, Buffer, BufferView, Accessor, AccessorType,
-    BufferTarget, ComponentType, FileResource, Image, Sampler, Texture, PBRMetallicRoughness, TextureInfo, Material)
+    BufferTarget, ComponentType, FileResource, PBRMetallicRoughness, Texture, Image, Material, TextureInfo, Sampler)
 
 from lib.parse_3db import Model
 from typing import List, Dict, Tuple
@@ -25,14 +25,15 @@ def export_to_gltf(model: Model, name: str, output_path: str):
     vertex_byte_array = bytearray()
     index_byte_array = bytearray()
 
-    mesh = model.meshes[0]
-    for mesh_link in mesh.links:
-        triangles = model.triangle_data[mesh_link.triangles]
-        points = model.points_data[mesh_link.points]
-        texture_coordinates = model.texture_coordinates_data[mesh_link.texture_coordinates]
+    kf_idx = 0
+    kf = model.keyframes[kf_idx]
+    for mesh in kf.meshes:
+        triangles = model.triangle_data[mesh.triangles]
+        points = model.vertices_data[mesh.vertices]
+        texture_coordinates = model.texture_coordinates_data[mesh.texture_coordinates]
         vertices = [transform_point(p) for p in points]
 
-        vertex_data_start = len(vertex_byte_array);
+        vertex_data_start = len(vertex_byte_array)
         for vertex in vertices:
             for value in vertex:
                 vertex_byte_array.extend(struct.pack('f', value))
@@ -62,7 +63,7 @@ def export_to_gltf(model: Model, name: str, output_path: str):
                             type=AccessorType.SCALAR.value))
 
         mesh_index = len(meshes)
-        meshes.append(Mesh(primitives=[Primitive(attributes=Attributes(POSITION=position_index, TEXCOORD_0=texture_coords_index), indices=indices_index, material=mesh_link.material)]))
+        meshes.append(Mesh(primitives=[Primitive(attributes=Attributes(POSITION=position_index, TEXCOORD_0=texture_coords_index), indices=indices_index, material=mesh.material)]))
         nodes.append(Node(mesh=mesh_index))
 
     images = []
