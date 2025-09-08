@@ -2,10 +2,11 @@ import struct
 import operator
 from gltflib import (
     GLTF, GLTFModel, Asset, Scene, Node, Mesh, Primitive, Attributes, Buffer, BufferView, Accessor, AccessorType,
-    BufferTarget, ComponentType, GLBResource, FileResource)
+    BufferTarget, ComponentType, FileResource, Image, Sampler, Texture, PBRMetallicRoughness, TextureInfo, Material)
 
 from lib.parse_3db import Model
 from typing import List, Dict, Tuple
+import os
 
 def transform_point(p: Tuple[float, float, float]):
     scale = 100
@@ -61,8 +62,38 @@ def export_to_gltf(model: Model, name: str, output_path: str):
                             type=AccessorType.SCALAR.value))
 
         mesh_index = len(meshes)
-        meshes.append(Mesh(primitives=[Primitive(attributes=Attributes(POSITION=position_index, TEXCOORD_0=texture_coords_index), indices=indices_index)]))
+        meshes.append(Mesh(primitives=[Primitive(attributes=Attributes(POSITION=position_index, TEXCOORD_0=texture_coords_index), indices=indices_index, material=mesh_link.material)]))
         nodes.append(Node(mesh=mesh_index))
+
+    images = []
+    texture_resources = []
+    gltfsamplers = []
+    gltftextures = []  
+    materials = []
+    for material in model.materials:
+        texture_name = material.name.decode('utf-8')
+        texture_resource = None
+        # check if file exists in m256 or m128 asset folder folder, take the highest version
+        # TODO: make this check the other folders
+        possible_paths = [
+            "./assets/in/m256/",
+            "./assets/in/m128/"
+        ]
+        FILE_ENDING = ".tga"
+        for path_suffix in possible_paths:
+            full_path = os.path.join(path_suffix, texture_name + FILE_ENDING)
+            if os.path.isfile(full_path):
+                images.append(Image(uri=full_path))
+                texture_resources.append(FileResource(full_path))
+                
+                # TODO: this adds a new sampler, texture and material per image texture, all with default values. There may be a cleaner way to handle this.
+                current_idx = len(gltftextures) - 1
+                gltfsamplers.append(Sampler())
+                gltftextures.append(Texture(sampler=current_idx,source=current_idx))
+                pbr = PBRMetallicRoughness(baseColorTexture=TextureInfo(index=current_idx))
+                gltf_material = Material(pbrMetallicRoughness=pbr)
+                materials.append(gltf_material)
+                break
 
     model = GLTFModel(
         asset=Asset(version='2.0'),
@@ -73,10 +104,16 @@ def export_to_gltf(model: Model, name: str, output_path: str):
                      BufferView(buffer=1, byteOffset=0, byteLength=len(index_byte_array), target=BufferTarget.ELEMENT_ARRAY_BUFFER.value)],
         accessors=accessors,
         meshes=meshes,
-        
+        materials=materials,
+        samplers=gltfsamplers,
+        textures=gltftextures,
+        images=images
     )
 
-    gltf = GLTF(model=model, resources=[FileResource(name + '_vertices.bin', data=vertex_byte_array),
-                                        FileResource(name + '_indices.bin', data=index_byte_array)])
+
+    resources = [FileResource(name + '_vertices.bin', data=vertex_byte_array),
+                FileResource(name + '_indices.bin', data=index_byte_array)]
+    resources.extend(texture_resources)
+    gltf = GLTF(model=model, resources=resources)
     gltf.export_glb(output_path + "/" + name + '_out.glb')
     print('Converted: ' + name)
