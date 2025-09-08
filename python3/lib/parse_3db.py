@@ -37,7 +37,7 @@ class Deserializer:
         self.advance(struct.calcsize('f'))
         return value
 
-    def read_vec3(self) -> (float, float, float):
+    def read_vec3(self) -> Tuple[float, float, float]:
         x = self.read_f32()
         y = self.read_f32()
         z = self.read_f32()
