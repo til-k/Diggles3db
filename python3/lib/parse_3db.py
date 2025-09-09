@@ -1,6 +1,7 @@
 import struct
 from dataclasses import dataclass
 from typing import List, Dict, Tuple
+import pprint
 
 # FIXME: Surely theres a nice python library already for this
 class Deserializer:
@@ -26,7 +27,14 @@ class Deserializer:
         self.advance(struct.calcsize('I'))
         return value
 
+    # by default, decode str as utf-8 encoded string
     def read_string(self) -> str:
+        length = self.read_u32() 
+        string = struct.unpack_from(f'{length}s', self.data, self.offset)[0]
+        self.advance(length)
+        return string.decode('utf-8')
+    
+    def read_str(self) -> str:
         length = self.read_u32() 
         string = struct.unpack_from(f'{length}s', self.data, self.offset)[0]
         self.advance(length)
@@ -50,7 +58,7 @@ class KeyframeMesh:
     triangles: int
     texture_coordinates: int
     vertices: int
-    brighness: int
+    brightness: int
 
 @dataclass
 class Keyframe:
@@ -120,13 +128,18 @@ def parse_3db_file(raw_data):
     # Read meshes
     keyframes = []
     for _ in range(keyframe_count):
-        # TODO: check if this EVER changes - it seems to always be the same. e.g. if a model has 2 meshes, this number is always 2
+        # TODO: Verify
+        # Each keyframe seems to have a fixed number of meshes, depending on the object to which it belongs
+        # Example: 
+        # Baby.3db only contains the baby object, which consists of two meshes - each keyframe always has to meshes
+        # Ringe.3db contains ring objects, which have multiple keyframes, but only one mesh per keyframe. meshes_in_keyframe_count is always 1 for there keyframes
+        # but it also contains the greipnir objects, which consists of 8 meshes each, so mesh_in_keyframe_count is always 8
         meshes_in_keyframe_count = deserializer.read_u16()
 
         meshes_in_keyframe = []
         for _ in range(meshes_in_keyframe_count):
             kf_material_idx = deserializer.read_u16()
-            # TODO: these might be normals which would change with each keyframe
+            # TODO: this is just 1 most of the time, so probably not normals
             kf_unknown_idx = deserializer.read_u16()
             kf_triangles_idx = deserializer.read_u16()
             kf_texture_coordinates_idx = deserializer.read_u16()
@@ -136,10 +149,14 @@ def parse_3db_file(raw_data):
             link = KeyframeMesh(kf_material_idx, kf_unknown_idx, kf_triangles_idx,
                             kf_texture_coordinates_idx, kf_vertices_idx,
                             kf_brightness_idx)
+            #pprint.pp(link)
             meshes_in_keyframe.append(link)
 
+        # TODO: Could be transform and rotation per keyframe??
         unknown1 = deserializer.read_vec3()
+        #pprint.pp(unknown1)
         unknown2 = deserializer.read_vec3()
+        #pprint.pp(unknown2)
         deserializer.advance(0x80)
         deserializer.advance(2)
         deserializer.advance(0x30)
@@ -148,26 +165,34 @@ def parse_3db_file(raw_data):
         keyframe = Keyframe(meshes_in_keyframe)
         keyframes.append(keyframe)
 
-    # Read object data
-    key_value_pair_count = deserializer.read_u16()
+    # Read which objects are contained in the 3db-file
+    # Example: baby.3db has only one object (baby), ringe.3db has multiple objects (individual rings and greipnir)
+    # This maps the named object to all of its animations
+    # TODO: Code could be more concise, but this is readable for now
+    object_count = deserializer.read_u16()    
     objects = {}
-    for _ in range(key_value_pair_count):
-        key = deserializer.read_string()
-        object_count = deserializer.read_u16()
-        objects[key] = []
-        for _ in range(object_count):
-            objects[key].append(deserializer.read_u32())
+    for _ in range(object_count):
+        object_name = deserializer.read_string()    
+        animation_count_for_object = deserializer.read_u16()
+        anims = []
+        for _ in range(animation_count_for_object):
+            animation_idx = deserializer.read_u32()
+            anims.append(animation_idx)
+        objects[object_name] = anims
+    #pprint.pp(objects)
 
     # Read animation data
     animations = []
     animation_count = deserializer.read_u16()
+    total_frame_count = 0
     for _ in range(animation_count):
         animation_name = deserializer.read_string()
 
-        some_count = deserializer.read_u16()
-        mesh_indices = []
-        for _ in range(some_count):
-            mesh_indices.append(deserializer.read_u32())
+        frame_count = deserializer.read_u16()
+        total_frame_count+=frame_count
+        frame_indices = []
+        for _ in range(frame_count):
+            frame_indices.append(deserializer.read_u32())
 
         # Read and ignore unknown values
         deserializer.read_u16()
@@ -176,8 +201,11 @@ def parse_3db_file(raw_data):
         deserializer.read_vec3()
         deserializer.read_vec3()
 
-        animation = Animation(animation_name, mesh_indices)
+        animation = Animation(animation_name, frame_indices)
         animations.append(animation)
+    # TODO: Add a check if total_cnt matches the number of frames in the animations
+    # If not, it might mean that there are unused frames in the 3db-file
+    # Might not be an error, just issue a warning?
 
     # Skip shadows
     shadow_count = deserializer.read_u16()
