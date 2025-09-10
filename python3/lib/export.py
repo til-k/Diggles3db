@@ -25,15 +25,18 @@ def export_to_gltf(model: Model, name: str, output_path: str):
     uv_byte_array = bytearray()
     index_byte_array = bytearray()
     accessors = []
+    keyframe_len = 0
     for [node_name, animations] in model.objects.items():
         kf_meshes = []
         triangle_idx_3db_to_gltf_accessor = dict()
+        base_vertices = []
         # Load first keyframe as base meshes, rest as morph targets
         for kf_mesh in model.keyframes[0].meshes:
             triangles = model.triangle_data[kf_mesh.triangles]
             points = model.vertices_data[kf_mesh.vertices]
             texture_coordinates = model.texture_coordinates_data[kf_mesh.texture_coordinates]
             vertices = [transform_point(p) for p in points]
+            base_vertices.append(vertices)
 
             vertex_data_start = len(vertex_byte_array)
             for vertex in vertices:
@@ -70,7 +73,8 @@ def export_to_gltf(model: Model, name: str, output_path: str):
 
             nodes.append(Node(name=node_name, mesh=mesh_index))
 
-        keyframes = model.keyframes[1:10]
+        keyframes = model.keyframes[1:]
+        keyframe_len = len(keyframes)
         for kf_idx, kf in enumerate(keyframes):
             current_mesh_idx = 0
             for kf_mesh in kf.meshes:
@@ -78,12 +82,15 @@ def export_to_gltf(model: Model, name: str, output_path: str):
                 texture_coordinates = model.texture_coordinates_data[kf_mesh.texture_coordinates]
                 vertices = [transform_point(p) for p in points]
 
+                morph_target_vertices = []
                 vertex_data_start = len(vertex_byte_array)
-                for vertex in vertices:
-                    for value in vertex:
-                        vertex_byte_array.extend(struct.pack('f', value))
-                mins = [min([operator.itemgetter(i)(vertex) for vertex in vertices]) for i in range(3)]
-                maxs = [max([operator.itemgetter(i)(vertex) for vertex in vertices]) for i in range(3)]
+                for vertex, base_vertex in zip(vertices,base_vertices[current_mesh_idx]):
+                    morph_target_vertices.append([vertex[0] - base_vertex[0], vertex[1] - base_vertex[1], vertex[2] - base_vertex[2]])
+                    for value, base_value in zip(vertex, base_vertex):
+                        vertex_byte_array.extend(struct.pack('f', value - base_value))
+
+                mins = [min([operator.itemgetter(i)(vertex) for vertex in morph_target_vertices]) for i in range(3)]
+                maxs = [max([operator.itemgetter(i)(vertex) for vertex in morph_target_vertices]) for i in range(3)]
 
                 texture_coords_start = len(uv_byte_array)
                 for t in texture_coordinates:
@@ -134,15 +141,15 @@ def export_to_gltf(model: Model, name: str, output_path: str):
 
     animation_in_byte_array = bytearray()
     animation_out_byte_array = bytearray()
-    ain_min = 0
+    ain_min = 10000
     ain_max = 0
-    for i in range(1, 10):
-        ain_val = (0.0 + ((i-1)/10.0))
+    for i in range(1, keyframe_len+1):
+        ain_val = (i/float(keyframe_len)) * 50
         if ain_val < ain_min: ain_min = ain_val
         if ain_val > ain_max: ain_max = ain_val
         animation_in_byte_array.extend(struct.pack('f', ain_val))
-        for j in range(1, 10):
-            if i==j:
+        for j in range(1, keyframe_len+1):
+            if i==(j+1):
                 animation_out_byte_array.extend(struct.pack('f', 1.0))
             else:
                 animation_out_byte_array.extend(struct.pack('f', 0.0))
@@ -151,12 +158,14 @@ def export_to_gltf(model: Model, name: str, output_path: str):
     ain_maxs = []
     ain_mins.append(ain_min)
     ain_maxs.append(ain_max)
-    accessors.append(Accessor(bufferView=3, byteOffset=0, componentType=ComponentType.FLOAT.value, count=9,
+    accessors.append(Accessor(bufferView=3, byteOffset=0, componentType=ComponentType.FLOAT.value, count=keyframe_len,
                         type=AccessorType.SCALAR.value, min=ain_mins, max=ain_maxs))
     accessor_a_out_idx = len(accessors)
-    accessors.append(Accessor(bufferView=4, byteOffset=0, componentType=ComponentType.FLOAT.value, count=81,
+    accessors.append(Accessor(bufferView=4, byteOffset=0, componentType=ComponentType.FLOAT.value, count=keyframe_len*keyframe_len,
                         type=AccessorType.SCALAR.value))
-    anim = Animation(channels=[Channel(sampler=0,target=Target(node=0, path="weights"))], samplers=[AnimationSampler(input=accessor_a_in_idx, output=accessor_a_out_idx)])
+    anim = Animation(name="test",
+                    channels=[Channel(sampler=0,target=Target(node=0, path="weights"))], 
+                    samplers=[AnimationSampler(input=accessor_a_in_idx, output=accessor_a_out_idx)])
     animations = [anim]
 
     model = GLTFModel(
