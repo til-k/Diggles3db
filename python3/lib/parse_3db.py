@@ -2,6 +2,7 @@ import struct
 from dataclasses import dataclass
 from typing import List, Dict, Tuple
 import pprint
+from lib.math_util import Vector3, Vector2
 
 # FIXME: Surely theres a nice python library already for this
 class Deserializer:
@@ -45,11 +46,16 @@ class Deserializer:
         self.advance(struct.calcsize('f'))
         return value
 
-    def read_vec3(self) -> Tuple[float, float, float]:
+    def read_vec2(self) -> Vector2:
+        x = self.read_f32()
+        y = self.read_f32()
+        return Vector2(x, y)
+    
+    def read_vec3(self) -> Vector3:
         x = self.read_f32()
         y = self.read_f32()
         z = self.read_f32()
-        return (x, y, z)
+        return Vector3(x, y, z)
 
 @dataclass
 class KeyframeMesh:
@@ -84,8 +90,8 @@ class Model:
     objects: Dict[str, int]
     animations: List[Animation]
     triangle_data: List[List[int]]
-    texture_coordinates_data: List[List[Tuple[float, float]]]
-    vertices_data: List[List[Tuple[float, float, float]]]
+    texture_coordinates_data: List[List[Vector2]]
+    vertex_data: List[List[Vector3]]
     brightness_data: List[List[int]]    
 
 
@@ -258,37 +264,19 @@ def parse_3db_file(raw_data):
         deserializer.advance(20)
 
     # Read actual triangle data
-    triangle_data = []
-    for i in range(triangle_count):
-        count = triangle_counts[i]
-        triangles = []
-        for _ in range(count):
-            triangles.append(deserializer.read_u16())
-        triangle_data.append(triangles)
+    triangle_data = [[deserializer.read_u16() for _ in range(count)] for count in triangle_counts]
 
     # Read texture coordinates data
-    texture_coordinates_data = []
-    for i in range(texture_coordinate_count):
-        count = texture_coordinate_counts[i]
-        texture_coordinates = []
-        for _ in range(count):
-            u = deserializer.read_f32()
-            v = deserializer.read_f32()
-            texture_coordinates.append((u, v))
-        texture_coordinates_data.append(texture_coordinates)
+    texture_coordinates_data = [[deserializer.read_vec2() for _ in range(count)] for count in texture_coordinate_counts]
 
     # Read vertices data
-    vertices_data = []
-    for i in range(vertex_count):
-        count = vertex_counts[i]
-        vertices = []
-        for _ in range(count):
-            x = deserializer.read_u16() / float(0xffff)
-            y = deserializer.read_u16() / float(0xffff)
-            z = deserializer.read_u16() / float(0xffff)
-            vertices.append((x, y, z))
-        vertices_data.append(vertices)
-
+    vertices_data = [
+        [Vector3(deserializer.read_u16() / float(0xffff),
+                    deserializer.read_u16() / float(0xffff),
+                    deserializer.read_u16() / float(0xffff))
+                    for _ in range(count)]
+        for count in vertex_counts]
+    
     # Read brightness data
     brightness_data = []
     for i in range(brightness_count):

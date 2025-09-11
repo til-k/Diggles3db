@@ -5,37 +5,42 @@ from gltflib import (
     BufferTarget, ComponentType, FileResource, PBRMetallicRoughness, Texture, Image, Material, TextureInfo, Sampler, Animation, AnimationSampler, Channel, Target)
 
 from lib.parse_3db import Model
+from lib.math_util import Vector3, Vector2
 from typing import List, Dict, Tuple
 import os
 
-def transform_point(p: Tuple[float, float, float]):
+def transform_vertex(v: Vector3) -> Vector3: 
     # TODO: Check why scale and axis flip work the way they do. It looks good when importing the model in Blender.
     scale = 100
     # Flip Y-axis and Z-axis to match the glTF coordinate system
-    result = ((p[0] - 0.5) * scale, - (p[1] -0.5) * scale, - (p[2] - 0.5) * scale)
-    return result
-
-def build_vertices_array(triangles: List[int], points: List[Tuple[float, float, float]]):
-    vertices = [points[index] for index in triangles]
-    return vertices
-
+    return Vector3((v.x - 0.5) * scale, - (v.y -0.5) * scale, - (v.z - 0.5) * scale)
 def export_to_gltf(model: Model, name: str, output_path: str):
+
     nodes = []
+    object_root_nodes = []
+    accessors = []
+
+    images = []
+    texture_resources = []
+    gltfsamplers = []
+    gltftextures = []  
+    materials = []
+
     vertex_byte_array = bytearray()
     uv_byte_array = bytearray()
     index_byte_array = bytearray()
-    accessors = []
-    keyframe_len = 0
+    
     for [node_name, animations] in model.objects.items():
         kf_meshes = []
-        triangle_idx_3db_to_gltf_accessor = dict()
         base_vertices = []
+        base_node_idx = len(nodes)
+        nodes.append(Node(name=node_name, children=[]))
+        object_root_nodes.append(base_node_idx)
         # Load first keyframe as base meshes, rest as morph targets
         for kf_mesh in model.keyframes[0].meshes:
-            triangles = model.triangle_data[kf_mesh.triangles]
-            points = model.vertices_data[kf_mesh.vertices]
+            vertices = [transform_vertex(p) for p in model.vertex_data[kf_mesh.vertices]]
             texture_coordinates = model.texture_coordinates_data[kf_mesh.texture_coordinates]
-            vertices = [transform_point(p) for p in points]
+            triangles = model.triangle_data[kf_mesh.triangles]
             base_vertices.append(vertices)
 
             vertex_data_start = len(vertex_byte_array)
@@ -43,54 +48,54 @@ def export_to_gltf(model: Model, name: str, output_path: str):
                 for value in vertex:
                     vertex_byte_array.extend(struct.pack('f', value))
 
-            mins = [min([operator.itemgetter(i)(vertex) for vertex in vertices]) for i in range(3)]
-            maxs = [max([operator.itemgetter(i)(vertex) for vertex in vertices]) for i in range(3)]
+            mins = list(map(min, zip(*vertices)))
+            maxs = list(map(max, zip(*vertices)))
+
+            position_index = len(accessors)
+            accessors.append(Accessor(bufferView=0, byteOffset=vertex_data_start, componentType=ComponentType.FLOAT.value, count=len(vertices),
+                                type=AccessorType.VEC3.value, min=mins, max=maxs))
 
             texture_coords_start = len(uv_byte_array)
             for t in texture_coordinates:
                 for value in t:
                     uv_byte_array.extend(struct.pack('f', value))
 
+            texture_coords_index = len(accessors)
+            accessors.append(Accessor(bufferView=1, byteOffset=texture_coords_start, componentType=ComponentType.FLOAT.value, count=len(texture_coordinates),
+                                type=AccessorType.VEC2.value))
+            
             indices_start = len(index_byte_array)
             for index in triangles:
                 index_byte_array.extend(struct.pack('I', index))
 
-            position_index = len(accessors)
-            accessors.append(Accessor(bufferView=0, byteOffset=vertex_data_start, componentType=ComponentType.FLOAT.value, count=len(vertices),
-                                type=AccessorType.VEC3.value, min=mins, max=maxs))
-
-            texture_coords_index = len(accessors)
-            accessors.append(Accessor(bufferView=1, byteOffset=texture_coords_start, componentType=ComponentType.FLOAT.value, count=len(texture_coordinates),
-                                type=AccessorType.VEC2.value))
-
             indices_index = len(accessors)
             accessors.append(Accessor(bufferView=2, byteOffset=indices_start, componentType=ComponentType.UNSIGNED_INT.value, count=len(triangles),
                                 type=AccessorType.SCALAR.value))
-            triangle_idx_3db_to_gltf_accessor[kf_mesh.triangles] = indices_index
 
             mesh_index = len(kf_meshes)
             kf_meshes.append(Mesh(primitives=[Primitive(attributes=Attributes(POSITION=position_index, TEXCOORD_0=texture_coords_index), indices=indices_index, material=kf_mesh.material, targets=[])]))
 
+            mesh_node_idx = len(nodes)
             nodes.append(Node(name=node_name, mesh=mesh_index))
+            nodes[base_node_idx].children.append(mesh_node_idx)
 
         keyframes = model.keyframes[1:]
         keyframe_len = len(keyframes)
         for kf_idx, kf in enumerate(keyframes):
             current_mesh_idx = 0
             for kf_mesh in kf.meshes:
-                points = model.vertices_data[kf_mesh.vertices]
                 texture_coordinates = model.texture_coordinates_data[kf_mesh.texture_coordinates]
-                vertices = [transform_point(p) for p in points]
+                vertices = [transform_vertex(p) for p in model.vertex_data[kf_mesh.vertices]]
 
                 morph_target_vertices = []
                 vertex_data_start = len(vertex_byte_array)
                 for vertex, base_vertex in zip(vertices,base_vertices[current_mesh_idx]):
-                    morph_target_vertices.append([vertex[0] - base_vertex[0], vertex[1] - base_vertex[1], vertex[2] - base_vertex[2]])
+                    morph_target_vertices.append(vertex - base_vertex)
                     for value, base_value in zip(vertex, base_vertex):
                         vertex_byte_array.extend(struct.pack('f', value - base_value))
 
-                mins = [min([operator.itemgetter(i)(vertex) for vertex in morph_target_vertices]) for i in range(3)]
-                maxs = [max([operator.itemgetter(i)(vertex) for vertex in morph_target_vertices]) for i in range(3)]
+                mins = list(map(min, zip(*morph_target_vertices)))
+                maxs = list(map(max, zip(*morph_target_vertices)))
 
                 texture_coords_start = len(uv_byte_array)
                 for t in texture_coordinates:
@@ -109,12 +114,6 @@ def export_to_gltf(model: Model, name: str, output_path: str):
                 mesh.primitives[0].targets.append(Attributes(POSITION=position_index, TEXCOORD_0=texture_coords_index))
                 current_mesh_idx+=1
 
-
-    images = []
-    texture_resources = []
-    gltfsamplers = []
-    gltftextures = []  
-    materials = []
     for material in model.materials:
         texture_name = material.name
         # check if file exists in m256 or m128 asset folder folder, take the highest version
@@ -170,7 +169,7 @@ def export_to_gltf(model: Model, name: str, output_path: str):
 
     model = GLTFModel(
         asset=Asset(version='2.0'),
-        scenes=[Scene(nodes=[idx for idx, _ in enumerate(nodes)])],
+        scenes=[Scene(nodes=[idx for idx, _ in enumerate(object_root_nodes)])],
         nodes=nodes,
         buffers=[Buffer(byteLength=len(vertex_byte_array), uri= name + '_vertices.bin'), 
                  Buffer(byteLength=len(uv_byte_array), uri= name + '_uvs.bin'), 
