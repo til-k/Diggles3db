@@ -32,87 +32,55 @@ def export_to_gltf(model: Model, name: str, output_path: str):
     
     for [node_name, animations] in model.objects.items():
         kf_meshes = []
-        base_vertices = []
+        base_node = Node(name=node_name, children=[])
         base_node_idx = len(nodes)
-        nodes.append(Node(name=node_name, children=[]))
+        nodes.append(base_node)
         object_root_nodes.append(base_node_idx)
-        # Load first keyframe as base meshes, rest as morph targets
-        for kf_mesh in model.keyframes[0].meshes:
-            vertices = [transform_vertex(p) for p in model.vertex_data[kf_mesh.vertices]]
-            texture_coordinates = model.texture_coordinates_data[kf_mesh.texture_coordinates]
-            triangles = model.triangle_data[kf_mesh.triangles]
-            base_vertices.append(vertices)
-
-            vertex_data_start = len(vertex_byte_array)
-            for vertex in vertices:
-                for value in vertex:
-                    vertex_byte_array.extend(struct.pack('f', value))
-
-            mins = list(map(min, zip(*vertices)))
-            maxs = list(map(max, zip(*vertices)))
-
-            position_index = len(accessors)
-            accessors.append(Accessor(bufferView=0, byteOffset=vertex_data_start, componentType=ComponentType.FLOAT.value, count=len(vertices),
-                                type=AccessorType.VEC3.value, min=mins, max=maxs))
-
-            texture_coords_start = len(uv_byte_array)
-            for t in texture_coordinates:
-                for value in t:
-                    uv_byte_array.extend(struct.pack('f', value))
-
-            texture_coords_index = len(accessors)
-            accessors.append(Accessor(bufferView=1, byteOffset=texture_coords_start, componentType=ComponentType.FLOAT.value, count=len(texture_coordinates),
-                                type=AccessorType.VEC2.value))
-            
-            indices_start = len(index_byte_array)
-            for index in triangles:
-                index_byte_array.extend(struct.pack('I', index))
-
-            indices_index = len(accessors)
-            accessors.append(Accessor(bufferView=2, byteOffset=indices_start, componentType=ComponentType.UNSIGNED_INT.value, count=len(triangles),
-                                type=AccessorType.SCALAR.value))
-
-            mesh_index = len(kf_meshes)
-            kf_meshes.append(Mesh(primitives=[Primitive(attributes=Attributes(POSITION=position_index, TEXCOORD_0=texture_coords_index), indices=indices_index, material=kf_mesh.material, targets=[])]))
-
-            mesh_node_idx = len(nodes)
-            nodes.append(Node(name=node_name, mesh=mesh_index))
-            nodes[base_node_idx].children.append(mesh_node_idx)
-
-        keyframes = model.keyframes[1:]
-        keyframe_len = len(keyframes)
-        for kf_idx, kf in enumerate(keyframes):
-            current_mesh_idx = 0
-            for kf_mesh in kf.meshes:
-                texture_coordinates = model.texture_coordinates_data[kf_mesh.texture_coordinates]
-                vertices = [transform_vertex(p) for p in model.vertex_data[kf_mesh.vertices]]
-
-                morph_target_vertices = []
+        # Invert structure from "list of frames, with list of all meshes" to "list of meshes with list of its frames"
+        meshes_with_frames = [[model.keyframes[i].meshes[j] for i in range(len(model.keyframes))] for j in range(len(model.keyframes[0].meshes))]
+        #meshes_with_frames = list(map(list, zip(*model.keyframes)))
+        keyframe_len = len(meshes_with_frames)
+        for mesh in meshes_with_frames:
+            base_vertices = None
+            base_indices = None
+            base_mesh = None
+            # Load first keyframe as base meshes, rest as morph target
+            for frame in mesh:
+                vertices = [transform_vertex(p) for p in model.vertex_data[frame.vertices]]
+                if base_vertices == None:   base_vertices = vertices
+                else:                       vertices = [vertex - base_vertex for vertex, base_vertex in zip(vertices, base_vertices)]
                 vertex_data_start = len(vertex_byte_array)
-                for vertex, base_vertex in zip(vertices,base_vertices[current_mesh_idx]):
-                    morph_target_vertices.append(vertex - base_vertex)
-                    for value, base_value in zip(vertex, base_vertex):
-                        vertex_byte_array.extend(struct.pack('f', value - base_value))
-
-                mins = list(map(min, zip(*morph_target_vertices)))
-                maxs = list(map(max, zip(*morph_target_vertices)))
-
-                texture_coords_start = len(uv_byte_array)
-                for t in texture_coordinates:
-                    for value in t:
-                        uv_byte_array.extend(struct.pack('f', value))
-
-                position_index = len(accessors)
+                [vertex_byte_array.extend(struct.pack('fff', v.x, v.y, v.z)) for v in vertices]
+                mins = list(map(min, zip(*vertices)))
+                maxs = list(map(max, zip(*vertices)))
+                vertex_accessor_idx = len(accessors)
                 accessors.append(Accessor(bufferView=0, byteOffset=vertex_data_start, componentType=ComponentType.FLOAT.value, count=len(vertices),
                                     type=AccessorType.VEC3.value, min=mins, max=maxs))
-
-                texture_coords_index = len(accessors)
+                
+                texture_coordinates = model.texture_coordinates_data[frame.texture_coordinates]
+                texture_coords_start = len(uv_byte_array)
+                [uv_byte_array.extend(struct.pack('ff', uv.x, uv.y)) for uv in texture_coordinates]
+                texture_coords_accessors_index = len(accessors)
                 accessors.append(Accessor(bufferView=1, byteOffset=texture_coords_start, componentType=ComponentType.FLOAT.value, count=len(texture_coordinates),
                                     type=AccessorType.VEC2.value))
+                
+                if base_indices == None:
+                    base_indices = model.triangle_data[frame.triangles]
+                    indices_start = len(index_byte_array)
+                    [index_byte_array.extend(struct.pack('I', index)) for index in base_indices]  
+                    indices_accessor_index = len(accessors)
+                    accessors.append(Accessor(bufferView=2, byteOffset=indices_start, componentType=ComponentType.UNSIGNED_INT.value, count=len(base_indices),
+                                        type=AccessorType.SCALAR.value))
 
-                mesh = kf_meshes[current_mesh_idx]
-                mesh.primitives[0].targets.append(Attributes(POSITION=position_index, TEXCOORD_0=texture_coords_index))
-                current_mesh_idx+=1
+                if base_mesh == None:
+                    mesh_index = len(kf_meshes)
+                    base_mesh = Mesh(primitives=[Primitive(attributes=Attributes(POSITION=vertex_accessor_idx, TEXCOORD_0=texture_coords_accessors_index), indices=indices_accessor_index, material=frame.material, targets=[])])
+                    kf_meshes.append(base_mesh)
+                    mesh_node_idx = len(nodes)
+                    nodes.append(Node(name=node_name, mesh=mesh_index))
+                    base_node.children.append(mesh_node_idx)
+                else:                
+                    base_mesh.primitives[0].targets.append(Attributes(POSITION=vertex_accessor_idx, TEXCOORD_0=texture_coords_accessors_index))
 
     for material in model.materials:
         texture_name = material.name
