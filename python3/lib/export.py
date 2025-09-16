@@ -8,6 +8,7 @@ from lib.parse_3db import Model
 from lib.math_util import Vector3, Vector2
 from typing import List, Dict, Tuple
 import os
+import pprint
 
 def transform_vertex(v: Vector3) -> Vector3: 
     # TODO: Check why scale and axis flip work the way they do. It looks good when importing the model in Blender.
@@ -19,6 +20,7 @@ def export_to_gltf(model: Model, name: str, output_path: str):
     nodes = []
     object_root_nodes = []
     accessors = []
+    meshes = []
 
     images = []
     texture_resources = []
@@ -37,27 +39,61 @@ def export_to_gltf(model: Model, name: str, output_path: str):
     sampler_idx = 0
 
     for [node_name, animation_idxs] in model.objects.items():
-        kf_meshes = []
         base_node = Node(name=node_name, children=[])
         base_node_idx = len(nodes)
         nodes.append(base_node)
         object_root_nodes.append(base_node_idx)
+        
+        base_meshes = []
+        base_vertices = []
+        # Get first keyframe of this object and use it to set base meshes
+        initial_keyframe = model.keyframes[model.animations[animation_idxs[0]].keyframes[0]]
+        for keyframe_mesh in initial_keyframe.meshes:
+            vertices = [transform_vertex(p) for p in model.vertex_data[keyframe_mesh.vertices]]
+            base_vertices.append(vertices)
+            mins = list(map(min, zip(*vertices)))
+            maxs = list(map(max, zip(*vertices)))
+            vertex_data_start = len(vertex_byte_array)
+            [vertex_byte_array.extend(struct.pack('fff', v.x, v.y, v.z)) for v in vertices]
+            vertex_accessor_idx = len(accessors)
+            accessors.append(Accessor(bufferView=0, byteOffset=vertex_data_start, componentType=ComponentType.FLOAT.value, count=len(vertices),
+                                type=AccessorType.VEC3.value, min=mins, max=maxs))
+            
+            texture_coordinates = model.texture_coordinates_data[keyframe_mesh.texture_coordinates]
+            texture_coords_start = len(uv_byte_array)
+            [uv_byte_array.extend(struct.pack('ff', uv.x, uv.y)) for uv in texture_coordinates]
+            texture_coords_accessors_index = len(accessors)
+            accessors.append(Accessor(bufferView=1, byteOffset=texture_coords_start, componentType=ComponentType.FLOAT.value, count=len(texture_coordinates),
+                                type=AccessorType.VEC2.value))
+        
+            base_indices = model.triangle_data[keyframe_mesh.triangles]
+            indices_start = len(index_byte_array)
+            [index_byte_array.extend(struct.pack('I', index)) for index in base_indices]  
+            indices_accessor_index = len(accessors)
+            accessors.append(Accessor(bufferView=2, byteOffset=indices_start, componentType=ComponentType.UNSIGNED_INT.value, count=len(base_indices),
+                                type=AccessorType.SCALAR.value))
+
+            mesh_index = len(meshes)
+            base_mesh = Mesh(primitives=[Primitive(attributes=Attributes(POSITION=vertex_accessor_idx, TEXCOORD_0=texture_coords_accessors_index), indices=indices_accessor_index, material=keyframe_mesh.material, targets=[])])
+            meshes.append(base_mesh)
+            base_meshes.append(base_mesh)
+            mesh_node_idx = len(nodes)
+            nodes.append(Node(name=node_name, mesh=mesh_index))
+            base_node.children.append(mesh_node_idx)
+
+        overall_keyframe_count = sum([len(model.animations[animation_idx].keyframes) for animation_idx in animation_idxs])
+        keyframe_idx = 0
         for animation_idx in animation_idxs:
             animation = model.animations[animation_idx]
             keyframes_in_animation = [kf for index, kf in enumerate(model.keyframes) if index in animation.keyframes]
+            keyframe_len = len(keyframes_in_animation)
+            #print(keyframe_len)
             # Invert structure from "list of frames, with list of all meshes" to "list of meshes with list of its frames"
             meshes_with_frames = [[keyframes_in_animation[i].meshes[j] for i in range(len(keyframes_in_animation))] for j in range(len(keyframes_in_animation[0].meshes))]
-            #meshes_with_frames = list(map(list, zip(*model.keyframes)))
-            for frames in meshes_with_frames:            
-                keyframe_len = len(frames)
-                base_vertices = None
-                base_indices = None
-                base_mesh = None
-                # Load first keyframe as base meshes, rest as morph target
+            for obj_mesh_index, frames in enumerate(meshes_with_frames):            
                 for frame in frames:
                     vertices = [transform_vertex(p) for p in model.vertex_data[frame.vertices]]
-                    if base_vertices == None:   base_vertices = vertices
-                    else:                       vertices = [vertex - base_vertex for vertex, base_vertex in zip(vertices, base_vertices)]
+                    vertices = [vertex - base_vertex for vertex, base_vertex in zip(vertices, base_vertices[obj_mesh_index])]
                     mins = list(map(min, zip(*vertices)))
                     maxs = list(map(max, zip(*vertices)))
                     vertex_data_start = len(vertex_byte_array)
@@ -73,49 +109,35 @@ def export_to_gltf(model: Model, name: str, output_path: str):
                     accessors.append(Accessor(bufferView=1, byteOffset=texture_coords_start, componentType=ComponentType.FLOAT.value, count=len(texture_coordinates),
                                         type=AccessorType.VEC2.value))
                     
-                    if base_indices == None:
-                        base_indices = model.triangle_data[frame.triangles]
-                        indices_start = len(index_byte_array)
-                        [index_byte_array.extend(struct.pack('I', index)) for index in base_indices]  
-                        indices_accessor_index = len(accessors)
-                        accessors.append(Accessor(bufferView=2, byteOffset=indices_start, componentType=ComponentType.UNSIGNED_INT.value, count=len(base_indices),
-                                            type=AccessorType.SCALAR.value))
-
-                    if base_mesh == None:
-                        mesh_index = len(kf_meshes)
-                        base_mesh = Mesh(primitives=[Primitive(attributes=Attributes(POSITION=vertex_accessor_idx, TEXCOORD_0=texture_coords_accessors_index), indices=indices_accessor_index, material=frame.material, targets=[])])
-                        kf_meshes.append(base_mesh)
-                        mesh_node_idx = len(nodes)
-                        nodes.append(Node(name=node_name, mesh=mesh_index))
-                        base_node.children.append(mesh_node_idx)
-                    else:                
-                        base_mesh.primitives[0].targets.append(Attributes(POSITION=vertex_accessor_idx, TEXCOORD_0=texture_coords_accessors_index))
+                    base_meshes[obj_mesh_index].primitives[0].targets.append(Attributes(POSITION=vertex_accessor_idx, TEXCOORD_0=texture_coords_accessors_index))
             
-                # TODO: Method to get min & max is a lazy hack right now
-                ain_min = 1000000
-                ain_max = 0
-                a_in_byteOffset = len(animation_in_byte_array)
-                a_out_byteOffset = len(animation_out_byte_array)
-                for i in range(1, keyframe_len+1):
-                    ain_val = (i/float(keyframe_len)) * 50
-                    if ain_val < ain_min: ain_min = ain_val
-                    if ain_val > ain_max: ain_max = ain_val
-                    animation_in_byte_array.extend(struct.pack('f', ain_val))
-                    for j in range(1, keyframe_len+1):
-                        if i==(j+1):
-                            animation_out_byte_array.extend(struct.pack('f', 1.0))
-                        else:
-                            animation_out_byte_array.extend(struct.pack('f', 0.0))
-                accessor_a_in_idx = len(accessors)
-                accessors.append(Accessor(bufferView=3, byteOffset=a_in_byteOffset, componentType=ComponentType.FLOAT.value, count=keyframe_len,
-                                    type=AccessorType.SCALAR.value, min=[ain_min], max=[ain_max]))
-                accessor_a_out_idx = len(accessors)
-                accessors.append(Accessor(bufferView=4, byteOffset=a_out_byteOffset, componentType=ComponentType.FLOAT.value, count=keyframe_len*(keyframe_len-1),
-                                    type=AccessorType.SCALAR.value))
-                gltf_anim = Animation(name=animation.name,
-                                channels=[Channel(sampler=0,target=Target(node=len(nodes)-1, path="weights"))],  # TODO: not good, but latest node should be the one that is targeted by this animation?
-                                samplers=[AnimationSampler(input=accessor_a_in_idx, output=accessor_a_out_idx)])
-                gltf_animations.append(gltf_anim)
+            # TODO: Method to get min & max is a lazy hack right now
+            ain_min = 1000000
+            ain_max = 0
+            a_in_byteOffset = len(animation_in_byte_array)
+            a_out_byteOffset = len(animation_out_byte_array)
+            for i in range(keyframe_len):
+                ain_val = (i/float(keyframe_len)) * 10
+                if ain_val < ain_min: ain_min = ain_val
+                if ain_val > ain_max: ain_max = ain_val
+                animation_in_byte_array.extend(struct.pack('f', ain_val))
+                for j in range(overall_keyframe_count):
+                    if (keyframe_idx+i)==j:
+                        animation_out_byte_array.extend(struct.pack('f', 1.0))
+                    else:
+                        animation_out_byte_array.extend(struct.pack('f', 0.0))
+            accessor_a_in_idx = len(accessors)
+            accessors.append(Accessor(bufferView=3, byteOffset=a_in_byteOffset, componentType=ComponentType.FLOAT.value, count=keyframe_len,
+                                type=AccessorType.SCALAR.value, min=[ain_min], max=[ain_max]))
+            accessor_a_out_idx = len(accessors)
+            accessors.append(Accessor(bufferView=4, byteOffset=a_out_byteOffset, componentType=ComponentType.FLOAT.value, count=keyframe_len*(overall_keyframe_count),
+                                type=AccessorType.SCALAR.value))
+            channels = [Channel(sampler=0,target=Target(node=base_node.children[obj_mesh_index], path="weights")) for obj_mesh_index in range(len(meshes_with_frames))]
+            gltf_anim = Animation(name=animation.name,
+                            channels=channels,  
+                            samplers=[AnimationSampler(input=accessor_a_in_idx, output=accessor_a_out_idx)])
+            gltf_animations.append(gltf_anim)
+            keyframe_idx+=keyframe_len
 
 
     for material in model.materials:
@@ -157,7 +179,7 @@ def export_to_gltf(model: Model, name: str, output_path: str):
                      BufferView(buffer=3, byteOffset=0, byteLength=len(animation_in_byte_array)),
                      BufferView(buffer=4, byteOffset=0, byteLength=len(animation_out_byte_array))],
         accessors=accessors,
-        meshes=kf_meshes,
+        meshes=meshes,
         materials=materials,
         samplers=gltfsamplers,
         textures=gltftextures,
