@@ -118,7 +118,7 @@ def export_to_gltf(model: Model, name: str, output_path: str):
             a_in_byteOffset = len(animation_in_byte_array)
             a_out_byteOffset = len(animation_out_byte_array)
             for i in range(keyframe_len):
-                ain_val = (i/float(keyframe_len)) * 10
+                ain_val = i * 0.1 # TODO: assumes that each frame is 0.1 seconds long. Looks good but is just a guess.
                 if ain_val < ain_min: ain_min = ain_val
                 if ain_val > ain_max: ain_max = ain_val
                 animation_in_byte_array.extend(struct.pack('f', ain_val))
