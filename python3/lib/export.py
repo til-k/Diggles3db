@@ -1,14 +1,11 @@
 import struct
-import operator
 from gltflib import (
     GLTF, GLTFModel, Asset, Scene, Node, Mesh, Primitive, Attributes, Buffer, BufferView, Accessor, AccessorType,
     BufferTarget, ComponentType, FileResource, PBRMetallicRoughness, Texture, Image, Material, TextureInfo, Sampler, Animation, AnimationSampler, Channel, Target)
 
 from lib.parse_3db import Model
-from lib.math_util import Vector3, Vector2
-from typing import List, Dict, Tuple
+from lib.math_util import Vector3
 import os
-import pprint
 from PIL import Image as PILImage
 
 def transform_vertex(v: Vector3) -> Vector3: 
@@ -16,6 +13,7 @@ def transform_vertex(v: Vector3) -> Vector3:
     scale = 100
     # Flip Y-axis and Z-axis to match the glTF coordinate system
     return Vector3((v.x - 0.5) * scale, - (v.y -0.5) * scale, - (v.z - 0.5) * scale)
+
 def export_to_gltf(model: Model, name: str, output_path: str):
 
     nodes = []
@@ -36,8 +34,6 @@ def export_to_gltf(model: Model, name: str, output_path: str):
     animation_in_byte_array = bytearray()
     animation_out_byte_array = bytearray()
     gltf_animations = []
-
-    sampler_idx = 0
 
     for [node_name, animation_idxs] in model.objects.items():
         base_node = Node(name=node_name, children=[])
@@ -88,7 +84,6 @@ def export_to_gltf(model: Model, name: str, output_path: str):
             animation = model.animations[animation_idx]
             keyframes_in_animation = [kf for index, kf in enumerate(model.keyframes) if index in animation.keyframes]
             keyframe_len = len(keyframes_in_animation)
-            #print(keyframe_len)
             # Invert structure from "list of frames, with list of all meshes" to "list of meshes with list of its frames"
             meshes_with_frames = [[keyframes_in_animation[i].meshes[j] for i in range(len(keyframes_in_animation))] for j in range(len(keyframes_in_animation[0].meshes))]
             for obj_mesh_index, frames in enumerate(meshes_with_frames):            
@@ -189,7 +184,6 @@ def export_to_gltf(model: Model, name: str, output_path: str):
         images=images,
         animations=gltf_animations
     )
-
 
     resources = [FileResource(name + '_vertices.bin', data=vertex_byte_array),
                  FileResource(name + '_uvs.bin', data=uv_byte_array),

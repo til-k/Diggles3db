@@ -1,7 +1,6 @@
 import struct
 from dataclasses import dataclass
-from typing import List, Dict, Tuple
-import pprint
+from typing import List, Dict
 from lib.math_util import Vector3, Vector2
 
 # FIXME: Surely theres a nice python library already for this
@@ -155,14 +154,11 @@ def parse_3db_file(raw_data):
             link = KeyframeMesh(kf_material_idx, kf_unknown_idx, kf_triangles_idx,
                             kf_texture_coordinates_idx, kf_vertices_idx,
                             kf_brightness_idx)
-            #pprint.pp(link)
             meshes_in_keyframe.append(link)
 
         # TODO: Could be transform and rotation per keyframe??
         unknown1 = deserializer.read_vec3()
-        #pprint.pp(unknown1)
         unknown2 = deserializer.read_vec3()
-        #pprint.pp(unknown2)
         deserializer.advance(0x80)
         deserializer.advance(2)
         deserializer.advance(0x30)
@@ -185,7 +181,6 @@ def parse_3db_file(raw_data):
             animation_idx = deserializer.read_u32()
             anims.append(animation_idx)
         objects[object_name] = anims
-    #pprint.pp(objects)
 
     # Read animation data
     animations = []
