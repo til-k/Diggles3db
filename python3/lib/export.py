@@ -9,6 +9,7 @@ from lib.math_util import Vector3, Vector2
 from typing import List, Dict, Tuple
 import os
 import pprint
+from PIL import Image as PILImage
 
 def transform_vertex(v: Vector3) -> Vector3: 
     # TODO: Check why scale and axis flip work the way they do. It looks good when importing the model in Blender.
@@ -152,8 +153,10 @@ def export_to_gltf(model: Model, name: str, output_path: str):
         for path_suffix in possible_paths:
             full_path = os.path.join(path_suffix, texture_name + FILE_ENDING)
             if os.path.isfile(full_path):
-                images.append(Image(uri=full_path))
-                texture_resources.append(FileResource(full_path))
+                pillow_image = PILImage.open(full_path)
+                pillow_image = pillow_image.save("./assets/out/" + texture_name + ".png")
+                images.append(Image(uri=texture_name + ".png"))
+                texture_resources.append(FileResource(texture_name + ".png", basepath="./assets/out/"))
                 
                 # TODO: this adds a new sampler, texture and material per image texture, all with default values. There may be a cleaner way to handle this.
                 current_idx = len(gltftextures)
