@@ -142,7 +142,9 @@ def export_to_gltf(model: Model, name: str, output_path: str):
         # TODO: make this check the other folders
         possible_paths = [
             "./assets/in/m256/",
-            "./assets/in/m128/"
+            "./assets/in/m128/",
+            "./assets/in/m064/",
+            "./assets/in/m032/"
         ]
         FILE_ENDING = ".tga"
         for path_suffix in possible_paths:
@@ -164,7 +166,7 @@ def export_to_gltf(model: Model, name: str, output_path: str):
 
     model = GLTFModel(
         asset=Asset(version='2.0'),
-        scenes=[Scene(nodes=[idx for idx, _ in enumerate(object_root_nodes)])],
+        scenes=[Scene(nodes=[idx for idx in object_root_nodes])],
         nodes=nodes,
         buffers=[Buffer(byteLength=len(vertex_byte_array), uri= name + '_vertices.bin'), 
                  Buffer(byteLength=len(uv_byte_array), uri= name + '_uvs.bin'), 

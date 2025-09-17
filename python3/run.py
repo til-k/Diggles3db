@@ -6,7 +6,7 @@ input_folder = './assets/in'
 output_folder = './assets/out'
 
 load_all = False
-selected_models = ["baby.3db"]
+selected_models = ["ringe.3db"]
 
 for filename in os.listdir(input_folder):
     if load_all or (not load_all and filename in selected_models):
