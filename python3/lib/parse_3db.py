@@ -1,6 +1,7 @@
 import struct
 from dataclasses import dataclass
-from typing import List, Dict, Tuple
+from typing import List, Dict
+from lib.math_util import Vector3, Vector2
 
 # FIXME: Surely theres a nice python library already for this
 class Deserializer:
@@ -26,7 +27,14 @@ class Deserializer:
         self.advance(struct.calcsize('I'))
         return value
 
+    # by default, decode str as utf-8 encoded string
     def read_string(self) -> str:
+        length = self.read_u32() 
+        string = struct.unpack_from(f'{length}s', self.data, self.offset)[0]
+        self.advance(length)
+        return string.decode('utf-8')
+    
+    def read_str(self) -> str:
         length = self.read_u32() 
         string = struct.unpack_from(f'{length}s', self.data, self.offset)[0]
         self.advance(length)
@@ -37,48 +45,54 @@ class Deserializer:
         self.advance(struct.calcsize('f'))
         return value
 
-    def read_vec3(self) -> (float, float, float):
+    def read_vec2(self) -> Vector2:
+        x = self.read_f32()
+        y = self.read_f32()
+        return Vector2(x, y)
+    
+    def read_vec3(self) -> Vector3:
         x = self.read_f32()
         y = self.read_f32()
         z = self.read_f32()
-        return (x, y, z)
+        return Vector3(x, y, z)
 
 @dataclass
-class MeshLink:
+class KeyframeMesh:
     material: int
     unknown: int
     triangles: int
     texture_coordinates: int
-    points: int
-    brighness: int
+    vertices: int
+    brightness: int
 
 @dataclass
-class Mesh:
-    links: List[MeshLink]
+class Keyframe:
+    meshes: List[KeyframeMesh]
 
 @dataclass
 class Material:
     name: str
-    path: str
+    texture_path: str
     _unknown: int = 0
 
 @dataclass
 class Animation:
     name: str
-    meshes: List[int]
+    keyframes: List[int]
 
 @dataclass
 class Model:
     db_version: str
     name: str
     materials: List[Material]
-    meshes: List[Mesh]
+    keyframes: List[Keyframe]
     objects: Dict[str, int]
     animations: List[Animation]
     triangle_data: List[List[int]]
-    texture_coordinates_data: List[List[Tuple[float, float]]]
-    points_data: List[List[Tuple[float, float, float]]]
-    brightness_data: List[List[int]]
+    texture_coordinates_data: List[List[Vector2]]
+    vertex_data: List[List[Vector3]]
+    brightness_data: List[List[int]]    
+
 
 # Basic python3 implementation of the same logic as the C# and python2.7
 # implementations 
@@ -99,36 +113,50 @@ def parse_3db_file(raw_data):
     materials = []
     for _ in range(material_count):
         material_name = deserializer.read_string()
-        material_path = deserializer.read_string()
+        material_texture_path = deserializer.read_string()
+        # TODO: this might be a material type?
         material_unknown = deserializer.read_u32()
 
-        material = Material(material_name, material_path, material_unknown)
+        material = Material(material_name, material_texture_path, material_unknown)
         materials.append(material)
 
     # Read mesh count
-    mesh_count = deserializer.read_u32()
+    # TODO: I probably wouldnt call this "mesh count", instead its the number of animation keyframes.
+    # each keyframe defines each mesh again
+    # I think link_triangles links into the appropriapte for the corresponding mesh
+    # the actual mesh count would be the number of defined meshes per keyframe, which is mesh_link_count. this count seems to always be the same, e.g. baby has one mesh for the hat and one for the body, and each keyframe has different points for those two
+    # I _think_ this is a size optimization -> Vertices, triangles, uvs, are stored only once, but can be combined/referenced in each keyframe
+    # this might be standard in 3D formats, but I'm not sure
+    # I suspect that animation than references a list of these keyframes
+    keyframe_count = deserializer.read_u32()
 
     # Read meshes
-    meshes = []
-    for _ in range(mesh_count):
-        mesh_link_count = deserializer.read_u16()
+    keyframes = []
+    for _ in range(keyframe_count):
+        # TODO: Verify
+        # Each keyframe seems to have a fixed number of meshes, depending on the object to which it belongs
+        # Example: 
+        # Baby.3db only contains the baby object, which consists of two meshes - each keyframe always has to meshes
+        # Ringe.3db contains ring objects, which have multiple keyframes, but only one mesh per keyframe. meshes_in_keyframe_count is always 1 for there keyframes
+        # but it also contains the greipnir objects, which consists of 8 meshes each, so mesh_in_keyframe_count is always 8
+        meshes_in_keyframe_count = deserializer.read_u16()
 
-        # Read mesh links
-        mesh_links = []
-        for _ in range(mesh_link_count):
-            link_material = deserializer.read_u16()
-            link_unknown = deserializer.read_u16()
-            link_triangles = deserializer.read_u16()
-            link_texture_coordinates = deserializer.read_u16()
-            link_points = deserializer.read_u16()
-            link_brightness = deserializer.read_u16()
+        meshes_in_keyframe = []
+        for _ in range(meshes_in_keyframe_count):
+            kf_material_idx = deserializer.read_u16()
+            # TODO: this is just 1 most of the time, so probably not normals
+            kf_unknown_idx = deserializer.read_u16()
+            kf_triangles_idx = deserializer.read_u16()
+            kf_texture_coordinates_idx = deserializer.read_u16()
+            kf_vertices_idx = deserializer.read_u16()
+            kf_brightness_idx = deserializer.read_u16()
 
-            link = MeshLink(link_material, link_unknown, link_triangles,
-                            link_texture_coordinates, link_points,
-                            link_brightness)
+            link = KeyframeMesh(kf_material_idx, kf_unknown_idx, kf_triangles_idx,
+                            kf_texture_coordinates_idx, kf_vertices_idx,
+                            kf_brightness_idx)
+            meshes_in_keyframe.append(link)
 
-            mesh_links.append(link)
-
+        # TODO: Could be transform and rotation per keyframe??
         unknown1 = deserializer.read_vec3()
         unknown2 = deserializer.read_vec3()
         deserializer.advance(0x80)
@@ -136,29 +164,36 @@ def parse_3db_file(raw_data):
         deserializer.advance(0x30)
         deserializer.advance(2)
 
-        mesh = Mesh(mesh_links)
-        meshes.append(mesh)
+        keyframe = Keyframe(meshes_in_keyframe)
+        keyframes.append(keyframe)
 
-    # Read object data
-    key_value_pair_count = deserializer.read_u16()
+    # Read which objects are contained in the 3db-file
+    # Example: baby.3db has only one object (baby), ringe.3db has multiple objects (individual rings and greipnir)
+    # This maps the named object to all of its animations
+    # TODO: Code could be more concise, but this is readable for now
+    object_count = deserializer.read_u16()    
     objects = {}
-    for _ in range(key_value_pair_count):
-        key = deserializer.read_string()
-        object_count = deserializer.read_u16()
-        objects[key] = []
-        for _ in range(object_count):
-            objects[key].append(deserializer.read_u32())
+    for _ in range(object_count):
+        object_name = deserializer.read_string()    
+        animation_count_for_object = deserializer.read_u16()
+        anims = []
+        for _ in range(animation_count_for_object):
+            animation_idx = deserializer.read_u32()
+            anims.append(animation_idx)
+        objects[object_name] = anims
 
     # Read animation data
     animations = []
     animation_count = deserializer.read_u16()
+    total_frame_count = 0
     for _ in range(animation_count):
         animation_name = deserializer.read_string()
 
-        some_count = deserializer.read_u16()
-        mesh_indices = []
-        for _ in range(some_count):
-            mesh_indices.append(deserializer.read_u32())
+        frame_count = deserializer.read_u16()
+        total_frame_count+=frame_count
+        frame_indices = []
+        for _ in range(frame_count):
+            frame_indices.append(deserializer.read_u32())
 
         # Read and ignore unknown values
         deserializer.read_u16()
@@ -167,8 +202,11 @@ def parse_3db_file(raw_data):
         deserializer.read_vec3()
         deserializer.read_vec3()
 
-        animation = Animation(animation_name, mesh_indices)
+        animation = Animation(animation_name, frame_indices)
         animations.append(animation)
+    # TODO: Add a check if total_cnt matches the number of frames in the animations
+    # If not, it might mean that there are unused frames in the 3db-file
+    # Might not be an error, just issue a warning?
 
     # Skip shadows
     shadow_count = deserializer.read_u16()
@@ -191,8 +229,8 @@ def parse_3db_file(raw_data):
     # Read texture coordinates?
     texture_coordinate_count = deserializer.read_u16()
 
-    # Read points
-    point_count = deserializer.read_u16()
+    # Read vertices
+    vertex_count = deserializer.read_u16()
 
     # Read brightness
     brightness_count = deserializer.read_u16()
@@ -209,9 +247,9 @@ def parse_3db_file(raw_data):
     for _ in range(texture_coordinate_count):
         texture_coordinate_counts.append(deserializer.read_u16())
 
-    point_counts = []
-    for _ in range(point_count):
-        point_counts.append(deserializer.read_u16())
+    vertex_counts = []
+    for _ in range(vertex_count):
+        vertex_counts.append(deserializer.read_u16())
 
     brightness_counts = []
     for _ in range(brightness_count):
@@ -221,37 +259,19 @@ def parse_3db_file(raw_data):
         deserializer.advance(20)
 
     # Read actual triangle data
-    triangle_data = []
-    for i in range(triangle_count):
-        count = triangle_counts[i]
-        triangles = []
-        for _ in range(count):
-            triangles.append(deserializer.read_u16())
-        triangle_data.append(triangles)
+    triangle_data = [[deserializer.read_u16() for _ in range(count)] for count in triangle_counts]
 
     # Read texture coordinates data
-    texture_coordinates_data = []
-    for i in range(texture_coordinate_count):
-        count = texture_coordinate_counts[i]
-        texture_coordinates = []
-        for _ in range(count):
-            u = deserializer.read_f32()
-            v = deserializer.read_f32()
-            texture_coordinates.append((u, v))
-        texture_coordinates_data.append(texture_coordinates)
+    texture_coordinates_data = [[deserializer.read_vec2() for _ in range(count)] for count in texture_coordinate_counts]
 
-    # Read points data
-    points_data = []
-    for i in range(point_count):
-        count = point_counts[i]
-        points = []
-        for _ in range(count):
-            x = deserializer.read_u16() / float(0xffff)
-            y = deserializer.read_u16() / float(0xffff)
-            z = deserializer.read_u16() / float(0xffff)
-            points.append((x, y, z))
-        points_data.append(points)
-
+    # Read vertices data
+    vertices_data = [
+        [Vector3(deserializer.read_u16() / float(0xffff),
+                    deserializer.read_u16() / float(0xffff),
+                    deserializer.read_u16() / float(0xffff))
+                    for _ in range(count)]
+        for count in vertex_counts]
+    
     # Read brightness data
     brightness_data = []
     for i in range(brightness_count):
@@ -262,7 +282,7 @@ def parse_3db_file(raw_data):
         brightness_data.append(brightness)
 
 
-    result = Model(db_version, name, materials, meshes, objects, animations,
-            triangle_data, texture_coordinates_data, points_data, brightness_data)
+    result = Model(db_version, name, materials, keyframes, objects, animations,
+            triangle_data, texture_coordinates_data, vertices_data, brightness_data)
     return result
 
